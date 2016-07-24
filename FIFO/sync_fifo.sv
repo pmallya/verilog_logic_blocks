@@ -1,123 +1,55 @@
-module sync_fifo 
-	#(parameter int wL = 8,
-	  parameter int d = 8 ) 
+module sync_fifo#(parameter DATA_LENGTH=8, FIFO_DEPTH=8)
+	( output logic [FIFO_DEPTH-1:0] dataOut,
+	  output logic full,
+	  output logic empty,
+	  input logic [FIFO_DEPTH-1:0] dataIn,
+	  input logic push,
+	  input logic pop,
+	  input clk,
+	  input logic reset);
 	
-   (input logic [wL-1:0] data_push,
-	output logic [wL-1:0] data_pop,
+	logic [$clog2(FIFO_DEPTH)-1:0] write_Ptr, read_Ptr;
+	logic [$clog2(FIFO_DEPTH):0] count;		   
 	
-	input logic push, // increment write pointer 
-	input logic pop, // increment read pointer
+	logic write_enable,read_enable;
+	logic[1:0] count_enable;
 	
-	output logic full,
-	output logic almost_full, // a push will cause full next cycle
-	output logic empty,
-	output logic almost_empty, // a pop will cause empty next cycle
+	assign write_enable = ~reset? 0: (push && !full);
+	assign read_enable = ~reset? 0: (pop && !empty);
+	assign count_enable = ~reset? 0: {write_enable,read_enable};
 	
-	input logic rst,
-	input logic clk
-	);
+	fifo_mem #(8, 8)	memory(.dataOut(dataOut),	
+	.dataIn(dataIn),
+	.read_address(read_Ptr),
+	.read_enable(read_enable),
+	.write_address(write_Ptr),
+	.write_enable(write_enable),
+	.clk(clk),
+	.reset(reset));
 	
-	parameter addL = $clog2(d); // $
+	fifo_pointer #(8) write_pointer
+	(.pointer(write_Ptr),
+	.enable(write_enable),
+	.clk(clk),
+	.reset(reset));
 	
-	logic [wL-1:0]  mem[d-1:0];
-	logic [addL-1:0] wrtPtr, wrtPtr_next;
-	logic [addL-1:0] rdPtr, rdPtr_next;	 
-	logic [addL:0] cnt;
+	fifo_pointer #(8) read_pointer
+	(.pointer(read_Ptr),
+	.enable(read_enable),
+	.clk(clk),
+	.reset(reset));
 	
-	logic full_next, empty_next, almost_full_next, almost_empty_next;
+	fifo_compare #(8) compare
+	(.full(full),
+	.empty(empty),
+	.count(count),
+	.reset(reset));
 	
-	// Assertions 
-	// assert -> cant pop on empty
-	// assert ( empty_next == 1 ) else $error("Empty: The memory is completely read and empty") ;
-	// assert -> cant push on full
-	// assert ( full_next == 1 ) else $error("Full: The memory is full.") ;
-	// assert -> push w/o pop and almost_full last cycle is full now			  
-	// assert ( almost_full_next == 1 ) else $error("Alomost Full: The memory one write entry left.") ;
-	// assert -> pop w/o push and almost_empty last cycle is empty now			  
-	// assert ( almost_empty_next == 1 ) else $error("Almost Empty: The memory has one element left to reead.") ;
+	fifo_counter #(8) counter 
+	( .count(count),
+	  .enable_count(count_enable),
+	  .reset(reset),	  
+	  .clk(clk));
 	
-	assign data_pop = mem[rdPtr];
-	assign full_next = (cnt == wL)? 1 : 0;
-	assign empty_next = ((cnt == 0) && (rdPtr == wrtPtr)) ? 1: 0;
 	
-	assign almost_full_next = (cnt == wL-1)? 1 : 0;					  
-	assign almost_empty_next = (cnt == 1) ? 1: 0;
-	
-	always_ff @(posedge clk) begin
-		if (~rst) begin
-			wrtPtr <= 0;
-			// for loop to reset the memory
-			for (int i=0;i<wL;i=i+1) begin
-				mem[i] <= 0;
-			end
-		end
-		else begin	  
-			// write into FIFO when read is 0
-			if (push && ~full_next) begin
-				mem[wrtPtr] <= data_push;
-     			wrtPtr <= wrtPtr_next;
-			end else if (push && pop && ~full_next) begin
-				mem[wrtPtr] <= data_push;
-     			wrtPtr <= wrtPtr_next;
-			end
-		end
-		end
-				
-		always_ff @(posedge clk) begin
-				if (~rst) begin
-					rdPtr <= 0;
-				end
-			// READ from FIFO and pop is 1
-		else begin 	
-			// rdPtr <=  (pop && !empty)? rdPtr_next: rdPtr; 
-				if (pop && ~empty_next) begin
-				 	rdPtr <= rdPtr_next;
-				end else if (push && pop && ~empty_next) begin
-					rdPtr <= rdPtr_next;
-				end
-			end
-		end
-
-	always @( posedge clk ) begin
-  		if( ~rst ) 
-    		cnt <= 0;
-  		else begin
-    		case ({push,pop})
-      			2'b00 : cnt <= cnt;
-      			2'b01 : cnt <= (cnt==0) ? 0 : cnt-1; 
-      			2'b10 : cnt <= (cnt==wL) ? wL : cnt+1; 
-      			2'b11 : cnt <= cnt;
-      			default: cnt <= cnt;
-    		endcase 
-  		end
-	end
-
-	always_comb begin 
-		if (~rst) begin
-			wrtPtr_next = 0;
-			rdPtr_next = 0;	
-		end
-		else begin 
-			wrtPtr_next = (push && ~full_next)? wrtPtr + 1 : wrtPtr;
-	  		rdPtr_next = (pop && ~empty_next)? rdPtr + 1 : rdPtr;
-		end		 	
-	end
-	
-	always_ff @(posedge clk) begin
-		if (~rst) begin
-			almost_full <= 0;
-			almost_empty <= 0;
-			full <= 0;
-			empty <= 1;
-		end
-		// READ from FIFO and pop is 1
-		else begin 	
-			full <= full_next;
-			empty <= empty_next;
-			almost_full <= almost_full_next;
-			almost_empty <= almost_empty_next;
-		end 
-			
-	end
-	
-endmodule
+	endmodule
